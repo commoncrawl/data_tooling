@@ -4,9 +4,9 @@ Definition of the main PiiManager object
 
 from collections import defaultdict
 from itertools import chain
+import importlib
 
-
-from typing import Iterable, Tuple, List, Callable, Union, Dict
+from typing import Iterable, Tuple, List, Callable, Union, Dict, Type
 
 from ..piientity import PiiEntity
 from ..piienum import PiiEnum
@@ -86,25 +86,38 @@ def fetch_task(
 
 # --------------------------------------------------------------------------
 
+def import_task_class(classname: str) -> Type[BasePiiTask]:
+    try:
+        modname, cname = classname.rsplit(".", 1)
+        mod = importlib.import_module(modname)
+        return getattr(mod, cname)
+    except Exception as e:
+        raise InvArgException('cannot import PiiTask class {}: {}', classname,
+                              e)
 
-def build_task(task) -> BasePiiTask:
-    if len(task) < 2:
-        InvArgException("invalid task object: {}", task)
-    lang, country, pii, obj = task[0:4]
-    if isinstance(obj, type(BasePiiTask)):
-        proc = obj(pii=pii, lang=lang, country=country)
-    elif isinstance(obj, Callable):
-        proc = CallablePiiTask(obj, pii=pii, lang=lang, country=country)
-    elif isinstance(obj, str):
-        proc = RegexPiiTask(
-            obj,
-            task[-1] if len(task) > 4 else pii.name,
-            pii=pii,
-            lang=lang,
-            country=country,
-        )
+
+def build_task(task: Dict) -> BasePiiTask:
+    """
+    Build a task object from its spec dict
+    """
+    try:
+        args = {k: task[k] for k in
+                ("pii", "lang", "country", "pii", "name", "doc")}
+        ttype, tobj = task["type"], task["task"]
+    except KeyError as e:
+        raise InvArgException("invalid pii task object: missing field {}", e)
+
+    if ttype == "PiiTask":
+        if isinstance(tobj, str):
+            tobj = import_task_class(tobj)
+        proc = tobj(**args)
+    elif ttype == "callable":
+        proc = CallablePiiTask(tobj, **args)
+    elif ttype in ("re", "regex"):
+        proc = RegexPiiTask(tobj, **args)
     else:
-        raise InvArgException("invalid pii task object for {}: {}", pii.name, type(obj))
+        raise InvArgException("invalid pii task type for {}: {}",
+                              task["pii"].name, ttype)
     return proc
 
 
